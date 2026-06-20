@@ -1432,7 +1432,7 @@ const ALLOCATION = buildAllocation();
 let SCORES = {};
 
 const GITHUB_OWNER = 'StevenGalea';
-const GITHUB_REPO  = 'dev-dev-2026-World-Cup';
+const GITHUB_REPO  = 'dev-2026-World-Cup';
 const GITHUB_BRANCH = 'main';
 // Same-origin file in this repo, populated by a scheduled GitHub
 // Action that pulls from Polymarket's public Gamma API (a genuinely
@@ -1440,7 +1440,7 @@ const GITHUB_BRANCH = 'main';
 // site, which is JS-rendered and would risk breaching their ToS).
 // Falls back to the original draw-day odds on ALL_TEAMS if this file
 // is missing, stale, or doesn't cover a given team.
-const LIVE_ODDS_URL = 'https://stevengalea.github.io/dev-dev-2026-World-Cup/odds_live.json';
+const LIVE_ODDS_URL = 'https://stevengalea.github.io/dev-2026-World-Cup/odds_live.json';
 
 async function fetchAndRender(showFeedback) {
   const btn = document.getElementById('refreshBtn');

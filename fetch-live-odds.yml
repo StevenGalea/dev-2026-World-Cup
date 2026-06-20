@@ -1,0 +1,40 @@
+name: Fetch Live World Cup Odds
+
+# Pulls live "World Cup Winner" implied probabilities from Polymarket's
+# public Gamma API (no API key required) and commits them to
+# odds_live.json in the repo root. The dashboard fetches this file
+# same-origin, exactly like scores.json and the fixtures feed, so
+# there's no CORS or auth problem on Safari iPhone or anywhere else.
+#
+# Source: https://gamma-api.polymarket.com/events?slug=world-cup-winner
+# This is Polymarket's own public, documented, no-key endpoint — not a
+# scrape of a betting site, so there's no ToS risk here.
+
+on:
+  schedule:
+    # Runs every 6 hours. Adjust cron as you like — odds don't need to
+    # be second-by-second fresh for this use case.
+    - cron: '0 */6 * * *'
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-odds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Fetch and transform odds
+        run: node fetch-odds.js
+        working-directory: .github/scripts
+
+      - name: Commit odds_live.json if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add odds_live.json
+          git diff --staged --quiet || git commit -m "Update live odds [automated]"
+          git push

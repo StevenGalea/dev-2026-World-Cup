@@ -533,9 +533,12 @@
   .bracket-col { display: flex; flex-direction: column; align-items: stretch; padding: 0 5px; }
   .bracket-col-label {
     font-family: 'Oswald', sans-serif; font-size: 10px; font-weight: 600;
-    color: rgba(249,245,232,0.35); text-transform: uppercase; letter-spacing: 1px;
+    color: var(--gold); text-transform: uppercase; letter-spacing: 1px;
     text-align: center; padding: 6px 0 10px; height: 30px;
+    border-bottom: 1px solid rgba(245,200,66,0.2); margin-bottom: 6px;
   }
+  .bk-name[onclick] { cursor: pointer; }
+  .bk-name[onclick]:hover { text-decoration: underline; color: var(--gold); }
 
   .bracket-group-pod {
     background: var(--pitch); border: 1px solid rgba(255,255,255,0.08);
@@ -1269,7 +1272,13 @@ const TEAM_NAME_MAP_OF = {
   "DR Congo": "Congo DR",
   "Cape Verde": "Cabo Verde",
 };
-function mapTeamName(name) { return TEAM_NAME_MAP_OF[name] || name; }
+function mapTeamName(name) {
+  if (!name) return name;
+  // Normalise openfootball placeholder codes: "3A/B/C/D/F" -> "3ABCDF", "1I" stays "1I"
+  const slashCode = name.match(/^([123])([A-L](?:\/[A-L])+)$/);
+  if (slashCode) return slashCode[1] + slashCode[2].replace(/\//g, '');
+  return TEAM_NAME_MAP_OF[name] || name;
+}
 
 const ROUND_ABBR = {
   "Round of 32": "R32",
@@ -2522,7 +2531,7 @@ function resolveSlotCode(code) {
 }
 
 // Build a bracket match card HTML from two slot codes + optional live fixture
-function bkMatchHtml(codeA, codeB, fixData, isFinal) {
+function bkMatchHtml(codeA, codeB, fixData, isFinal, matchLabel) {
   const ra = resolveSlotCode(codeA);
   const rb = resolveSlotCode(codeB);
   const hasScore = fixData && fixData.scoreA !== null && fixData.scoreA !== undefined;
@@ -2534,13 +2543,27 @@ function bkMatchHtml(codeA, codeB, fixData, isFinal) {
     else if (fixData.pensA != null)            { winnerName = fixData.pensA > fixData.pensB ? ra.name : rb.name; loserName = winnerName === ra.name ? rb.name : ra.name; }
   }
 
+  const timeStr = fixData && fixData.time ? fixData.time : '';
+  const headerParts = [];
+  if (matchLabel) headerParts.push(`<span style="font-size:9px;font-family:'Oswald',sans-serif;color:var(--gold);letter-spacing:0.5px">${matchLabel}</span>`);
+  if (timeStr) headerParts.push(`<span style="font-size:9px;color:rgba(249,245,232,0.3);margin-left:auto">${timeStr}</span>`);
+  const headerHtml = headerParts.length
+    ? `<div style="display:flex;align-items:center;gap:4px;padding:3px 7px 2px;border-bottom:1px solid rgba(255,255,255,0.05)">${headerParts.join('')}</div>`
+    : '';
+
   function teamRow(r, score) {
     const isWinner = winnerName && r.name === winnerName;
     const isLoser  = loserName  && r.name === loserName;
     const cls = isWinner ? 'winner' : isLoser ? 'loser' : '';
-    const nameHtml = r.resolved
-      ? `<span class="bk-flag">${r.flag}</span><span class="bk-name">${r.name}</span>${r.person ? `<span class="bk-owner">${r.person}</span>` : ''}`
-      : `<span class="bk-placeholder">${r.name}</span>`;
+    let nameHtml;
+    if (r.resolved) {
+      const clickable = TEAM_LOOKUP[r.name]
+        ? `onclick="filterFixturesByTeamAndNavigate('${r.name.replace(/'/g,"\\'")}')" style="cursor:pointer"`
+        : '';
+      nameHtml = `<span class="bk-flag">${r.flag}</span><span class="bk-name" ${clickable}>${r.name}</span>${r.person ? `<span class="bk-owner">${r.person}</span>` : ''}`;
+    } else {
+      nameHtml = `<span class="bk-placeholder">${r.name}</span>`;
+    }
     const scoreHtml = score !== null && score !== undefined ? `<span class="bk-score">${score}</span>` : '';
     return `<div class="bk-team-row ${cls}">${nameHtml}${scoreHtml}</div>`;
   }
@@ -2549,6 +2572,7 @@ function bkMatchHtml(codeA, codeB, fixData, isFinal) {
   const scoreB = hasScore ? fixData.scoreB : null;
 
   return `<div class="bk-match${isFinal?' bk-final':''}">
+    ${headerHtml}
     ${teamRow(ra, scoreA)}
     ${teamRow(rb, scoreB)}
   </div>`;
@@ -2570,7 +2594,6 @@ function renderBracketDesktop() {
   const grid = document.getElementById('bracketGrid');
   if (!grid) return;
 
-  const allGroups = ['A','B','C','D','E','F','G','H','I','J','K','L'];
   const leftGroups  = ['A','B','C','D','E','F'];
   const rightGroups = ['G','H','I','J','K','L'];
   const standings = buildGroupStandingsDetailed();
@@ -2578,106 +2601,115 @@ function renderBracketDesktop() {
 
   function groupPodHtml(g) {
     const rows = standings[g] || [];
-    const teamRows = rows.map((t, i) => {
+    const allTeams = ALL_TEAMS.filter(t => t.group === g && t.tier <= 4);
+    const source = rows.length ? rows : allTeams.map(t => ({ team: t.name, flag: t.flag }));
+    const teamRows = source.map((t, i) => {
       const team = TEAM_LOOKUP[t.team];
       const owner = team && team.person ? team.person : '';
       let cls = '';
-      if (i < 2) {
-        cls = isEliminated(t.team) ? 'elim' : '';
-      } else if (i === 2) {
-        const td = thirdCache.find(x => x.team === t.team);
-        cls = td && td.advancing ? 'advancing-third' : isGroupComplete(g) ? 'elim' : '';
-      } else {
-        cls = isGroupComplete(g) ? 'elim' : '';
-      }
-      return `<div class="bracket-group-team ${cls}">
+      if (i < 2) { cls = isEliminated(t.team) ? 'elim' : ''; }
+      else if (i === 2) { const td = thirdCache.find(x => x.team === t.team); cls = td && td.advancing ? 'advancing-third' : isGroupComplete(g) ? 'elim' : ''; }
+      else { cls = isGroupComplete(g) ? 'elim' : ''; }
+      const clickable = TEAM_LOOKUP[t.team] ? `onclick="filterFixturesByTeamAndNavigate('${t.team.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
+      return `<div class="bracket-group-team ${cls}" ${clickable}>
         <span>${getFlag(t.team)}</span>
         <span class="bgt-name">${t.team}</span>
         ${owner ? `<span class="bgt-owner">${owner}</span>` : ''}
       </div>`;
     }).join('');
-    // If no results yet, show all teams from ALL_TEAMS
-    const allTeams = ALL_TEAMS.filter(t => t.group === g && t.tier <= 4);
-    const content = rows.length ? teamRows : allTeams.map(t =>
-      `<div class="bracket-group-team"><span>${t.flag}</span><span class="bgt-name">${t.name}</span>${t.person?`<span class="bgt-owner">${t.person}</span>`:''}</div>`
-    ).join('');
     return `<div class="bracket-group-pod">
       <div class="bracket-group-pod-label">Group ${g}</div>
-      ${content}
+      ${teamRows}
     </div>`;
   }
 
-  // Build R32 match cards -- 16 matches split: left side = matches feeding left bracket, right side = right bracket
-  // Left bracket slots (feed from left groups A-F): 73,74,75,76,77,78,79,80 (indices 0-7 of R32_SLOTS)
-  // Right bracket slots (feed from right groups G-L): 81,82,83,84,85,86,87,88 (indices 8-15)
-  // Actually by match number ordering, left side = 73-80, right = 81-88
-  const r32Left  = R32_SLOTS.filter(s => s.id <= 80);
-  const r32Right = R32_SLOTS.filter(s => s.id >= 81);
+  // Official bracket display order (per FIFA bracket structure from image):
+  // Left R32 top half:  M74, M77, M73, M75
+  // Left R32 bot half:  M83, M84, M81, M82
+  // Right R32 top half: M76, M78, M79, M80
+  // Right R32 bot half: M86, M88, M85, M87
+  const r32LeftOrder  = [74, 77, 73, 75, 83, 84, 81, 82];
+  const r32RightOrder = [76, 78, 79, 80, 86, 88, 85, 87];
 
-  function r32CardHtml(slot) {
-    const idx = R32_SLOTS.findIndex(s => s.id === slot.id);
-    const fix = getKoFixture('Round of 32', idx);
-    // Use actual fixture team codes if available, otherwise use slot codes
+  function r32CardHtml(matchId) {
+    const slotIdx = R32_SLOTS.findIndex(s => s.id === matchId);
+    const slot = R32_SLOTS[slotIdx];
+    const fix = getKoFixture('Round of 32', slotIdx);
     const codeA = (fix && fix.teamA) ? fix.teamA : slot.a;
     const codeB = (fix && fix.teamB) ? fix.teamB : slot.b;
-    return bkMatchHtml(codeA, codeB, fix, false);
+    return bkMatchHtml(codeA, codeB, fix, false, `M${matchId}`);
   }
 
-  function r16CardHtml(slot, idx) {
-    const fix = getKoFixture('Round of 16', idx);
+  // R16 display order -- left: M89,M90,M93,M94; right: M91,M92,M95,M96
+  // M89=r16_1(W74,W77), M90=r16_2(W73,W75), M93=r16_5(W83,W84), M94=r16_6(W81,W82)
+  // M91=r16_3(W76,W78), M92=r16_4(W79,W80), M95=r16_7(W86,W88), M96=r16_8(W85,W87)
+  const r16LeftOrder  = [0, 1, 4, 5]; // indices into R16_SLOTS
+  const r16RightOrder = [2, 3, 6, 7];
+  const r16Labels     = ['M89','M90','M93','M94','M91','M92','M95','M96'];
+
+  function r16CardHtml(slotIdx, label) {
+    const slot = R16_SLOTS[slotIdx];
+    const fix = getKoFixture('Round of 16', slotIdx);
     const codeA = (fix && fix.teamA) ? fix.teamA : slot.a;
     const codeB = (fix && fix.teamB) ? fix.teamB : slot.b;
-    return bkMatchHtml(codeA, codeB, fix, false);
+    return bkMatchHtml(codeA, codeB, fix, false, label);
   }
 
-  function qfCardHtml(slot, idx) {
-    const fix = getKoFixture('Quarter-final', idx);
+  // QF: M97=qf1(W89,W90), M98=qf3(W93,W94), M99=qf2(W91,W92), M100=qf4(W95,W96)
+  const qfLeftOrder  = [0, 2]; // QF_SLOTS indices
+  const qfRightOrder = [1, 3];
+  const qfLabels     = ['M97','M98','M99','M100'];
+
+  function qfCardHtml(slotIdx, label) {
+    const slot = QF_SLOTS[slotIdx];
+    const fix = getKoFixture('Quarter-final', slotIdx);
     const codeA = (fix && fix.teamA) ? fix.teamA : slot.a;
     const codeB = (fix && fix.teamB) ? fix.teamB : slot.b;
-    return bkMatchHtml(codeA, codeB, fix, false);
+    return bkMatchHtml(codeA, codeB, fix, false, label);
   }
 
-  function sfCardHtml(slot, idx) {
-    const fix = getKoFixture('Semi-final', idx);
+  // SF: M101=sf1, M102=sf2
+  function sfCardHtml(slotIdx, label) {
+    const slot = SF_SLOTS[slotIdx];
+    const fix = getKoFixture('Semi-final', slotIdx);
     const codeA = (fix && fix.teamA) ? fix.teamA : slot.a;
     const codeB = (fix && fix.teamB) ? fix.teamB : slot.b;
-    return bkMatchHtml(codeA, codeB, fix, false);
+    return bkMatchHtml(codeA, codeB, fix, false, label);
   }
 
-  // Each round column needs vertical spacing to align matches correctly.
-  // R32: 8 matches. R16: 4. QF: 2. SF: 1 each side. Final: 1 centre.
-  // We use flex with spacers. Unit height ~58px per match card (2 rows * 26px + margins).
-  const U = 64; // base spacing unit in px
+  const U = 64;
 
-  function colHtml(label, matchesHtml) {
-    return `<div class="bracket-col">
-      <div class="bracket-col-label">${label}</div>
-      ${matchesHtml}
-    </div>`;
+  function colHtml(label, matchesHtml, isFinalCol) {
+    const labelHtml = isFinalCol
+      ? `<div class="bracket-col-label">🏆 ${label}</div>`
+      : `<div class="bracket-col-label">${label}</div>`;
+    return `<div class="bracket-col">${labelHtml}${matchesHtml}</div>`;
   }
 
   // Left group pods
   const leftGroupsHtml = leftGroups.map(g => groupPodHtml(g)).join('');
 
-  // Left R32 (8 matches, no spacing needed -- base level)
-  const leftR32Html = r32Left.map(s => `<div class="bk-match-wrap">${r32CardHtml(s)}</div>`).join('');
+  // Left R32 (8 matches in official order)
+  const leftR32Html = r32LeftOrder.map(id => `<div class="bk-match-wrap">${r32CardHtml(id)}</div>`).join('');
 
-  // Left R16 (4 matches, each spans 2 R32 slots = 1U gap before each after first)
-  const leftR16Html = R16_SLOTS.slice(0,4).map((s,i) => {
+  // Left R16: M89 aligns with M74+M77, M90 with M73+M75, M93 with M83+M84, M94 with M81+M82
+  const leftR16Html = r16LeftOrder.map((slotIdx, i) => {
+    const label = ['M89','M90','M93','M94'][i];
     const spacer = i === 0 ? `<div class="bk-spacer" style="height:${U/2}px"></div>` : `<div class="bk-spacer" style="height:${U}px"></div>`;
-    return `<div class="bk-match-wrap">${spacer}${r16CardHtml(s,i)}</div>`;
+    return `<div class="bk-match-wrap">${spacer}${r16CardHtml(slotIdx, label)}</div>`;
   }).join('');
 
-  // Left QF (2 matches)
-  const leftQFHtml = QF_SLOTS.slice(0,2).map((s,i) => {
+  // Left QF: M97 aligns with M89+M90, M98 with M93+M94
+  const leftQFHtml = qfLeftOrder.map((slotIdx, i) => {
+    const label = ['M97','M98'][i];
     const spacer = i === 0 ? `<div class="bk-spacer" style="height:${U*1.5}px"></div>` : `<div class="bk-spacer" style="height:${U*3}px"></div>`;
-    return `<div class="bk-match-wrap">${spacer}${qfCardHtml(s,i)}</div>`;
+    return `<div class="bk-match-wrap">${spacer}${qfCardHtml(slotIdx, label)}</div>`;
   }).join('');
 
-  // Left SF (1 match)
-  const leftSFHtml = `<div class="bk-match-wrap"><div class="bk-spacer" style="height:${U*3.5}px"></div>${sfCardHtml(SF_SLOTS[0],0)}</div>`;
+  // Left SF: M101
+  const leftSFHtml = `<div class="bk-match-wrap"><div class="bk-spacer" style="height:${U*3.5}px"></div>${sfCardHtml(0, 'M101')}</div>`;
 
-  // Final (centre column) -- also include 3rd place
+  // Final + 3rd place (centre)
   const finalFix = getKoFixture('Final', 0);
   const thirdFix = getKoFixture('Match for third place', 0);
   const finalA = finalFix ? finalFix.teamA : 'W_sf1';
@@ -2686,44 +2718,45 @@ function renderBracketDesktop() {
   const thirdB = thirdFix ? thirdFix.teamB : 'L_sf2';
   const centreHtml = `<div class="bk-match-wrap">
     <div class="bk-spacer" style="height:${U*4}px"></div>
-    <div style="text-align:center;font-family:'Oswald',sans-serif;font-size:9px;color:rgba(249,245,232,0.3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Final</div>
-    ${bkMatchHtml(finalA, finalB, finalFix, true)}
-    <div style="text-align:center;font-family:'Oswald',sans-serif;font-size:9px;color:rgba(249,245,232,0.25);letter-spacing:1px;text-transform:uppercase;margin-top:12px;margin-bottom:4px">3rd Place</div>
-    ${bkMatchHtml(thirdA, thirdB, thirdFix, false)}
+    ${bkMatchHtml(finalA, finalB, finalFix, true, 'M104')}
+    <div style="text-align:center;font-family:'Oswald',sans-serif;font-size:9px;color:rgba(249,245,232,0.25);letter-spacing:1px;text-transform:uppercase;margin-top:14px;margin-bottom:4px">3rd Place</div>
+    ${bkMatchHtml(thirdA, thirdB, thirdFix, false, 'M103')}
   </div>`;
 
-  // Right SF (1 match)
-  const rightSFHtml = `<div class="bk-match-wrap"><div class="bk-spacer" style="height:${U*3.5}px"></div>${sfCardHtml(SF_SLOTS[1],1)}</div>`;
+  // Right SF: M102
+  const rightSFHtml = `<div class="bk-match-wrap"><div class="bk-spacer" style="height:${U*3.5}px"></div>${sfCardHtml(1, 'M102')}</div>`;
 
-  // Right QF (2 matches)
-  const rightQFHtml = QF_SLOTS.slice(2,4).map((s,i) => {
+  // Right QF: M99, M100
+  const rightQFHtml = qfRightOrder.map((slotIdx, i) => {
+    const label = ['M99','M100'][i];
     const spacer = i === 0 ? `<div class="bk-spacer" style="height:${U*1.5}px"></div>` : `<div class="bk-spacer" style="height:${U*3}px"></div>`;
-    return `<div class="bk-match-wrap">${spacer}${qfCardHtml(s,i+2)}</div>`;
+    return `<div class="bk-match-wrap">${spacer}${qfCardHtml(slotIdx, label)}</div>`;
   }).join('');
 
-  // Right R16 (4 matches)
-  const rightR16Html = R16_SLOTS.slice(4,8).map((s,i) => {
+  // Right R16: M91, M92, M95, M96
+  const rightR16Html = r16RightOrder.map((slotIdx, i) => {
+    const label = ['M91','M92','M95','M96'][i];
     const spacer = i === 0 ? `<div class="bk-spacer" style="height:${U/2}px"></div>` : `<div class="bk-spacer" style="height:${U}px"></div>`;
-    return `<div class="bk-match-wrap">${spacer}${r16CardHtml(s,i+4)}</div>`;
+    return `<div class="bk-match-wrap">${spacer}${r16CardHtml(slotIdx, label)}</div>`;
   }).join('');
 
-  // Right R32 (8 matches)
-  const rightR32Html = r32Right.map(s => `<div class="bk-match-wrap">${r32CardHtml(s)}</div>`).join('');
+  // Right R32 in official order
+  const rightR32Html = r32RightOrder.map(id => `<div class="bk-match-wrap">${r32CardHtml(id)}</div>`).join('');
 
   // Right group pods
   const rightGroupsHtml = rightGroups.map(g => groupPodHtml(g)).join('');
 
   grid.innerHTML = [
     colHtml('Groups A–F', leftGroupsHtml),
-    colHtml('Rd 32', leftR32Html),
-    colHtml('Rd 16', leftR16Html),
-    colHtml('QF', leftQFHtml),
-    colHtml('SF', leftSFHtml),
-    colHtml('Final', centreHtml),
-    colHtml('SF', rightSFHtml),
-    colHtml('QF', rightQFHtml),
-    colHtml('Rd 16', rightR16Html),
-    colHtml('Rd 32', rightR32Html),
+    colHtml('Round of 32', leftR32Html),
+    colHtml('Round of 16', leftR16Html),
+    colHtml('Quarter-Finals', leftQFHtml),
+    colHtml('Semi-Finals', leftSFHtml),
+    colHtml('Final', centreHtml, true),
+    colHtml('Semi-Finals', rightSFHtml),
+    colHtml('Quarter-Finals', rightQFHtml),
+    colHtml('Round of 16', rightR16Html),
+    colHtml('Round of 32', rightR32Html),
     colHtml('Groups G–L', rightGroupsHtml),
   ].join('');
 }
@@ -3157,7 +3190,7 @@ function renderLeaderboard() {
     const teams = ALLOCATION[p.name];
     const chips = teams.map(t=>{
       const elim = isEliminated(t.name);
-      return `<span class="team-chip"><span class="tier-badge tier-${t.tier}"></span>${getFlag(t.name)} ${t.name}${elim?'<span class=\"eliminated-badge\">OUT</span>':''}</span>`;
+      return `<span class="team-chip" onclick="filterFixturesByTeamAndNavigate('${t.name}')" style="cursor:pointer"><span class="tier-badge tier-${t.tier}"></span>${getFlag(t.name)} ${t.name}${elim?'<span class=\"eliminated-badge\">OUT</span>':''}</span>`;
     }).join('');
     const breakdown = ROUNDS.map(r=>{
       const pts = teams.reduce((s,t)=>s+getScore(t.name,r.key),0);

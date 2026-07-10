@@ -1,13 +1,13 @@
 {
-  "updated": "2026-07-10T03:46:11.761Z",
+  "updated": "2026-07-10T09:43:26.862Z",
   "source": "Polymarket (gamma-api.polymarket.com, event slug: world-cup-winner)",
   "odds": {
-    "Spain": 5.8,
+    "Spain": 5.93,
     "England": 6.27,
     "France": 2.59,
-    "Argentina": 5.6,
+    "Argentina": 5.33,
     "Belgium": 46.51,
-    "Norway": 17.09,
+    "Norway": 16.53,
     "Switzerland": 51.28
   }
 }
